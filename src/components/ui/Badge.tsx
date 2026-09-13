@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { DeviceStatus, Severity } from "@/types";
-import { cn } from "@/lib/utils";
+import { cn, severityTier } from "@/lib/utils";
 
 const SEVERITY_STYLES: Record<Severity, string> = {
   info: "border-sky-400/30 bg-sky-400/10 text-sky-200",
@@ -10,7 +10,7 @@ const SEVERITY_STYLES: Record<Severity, string> = {
 
 export function SeverityBadge({ severity, children }: { severity: Severity; children?: ReactNode }) {
   return (
-    <span className={cn("chip capitalize", SEVERITY_STYLES[severity])}>
+    <span className={cn("chip font-semibold tracking-wide", SEVERITY_STYLES[severity])}>
       <span
         className={cn(
           "h-1.5 w-1.5 rounded-full",
@@ -19,7 +19,7 @@ export function SeverityBadge({ severity, children }: { severity: Severity; chil
           severity === "info" && "bg-sky-400",
         )}
       />
-      {children ?? severity}
+      {children ?? severityTier(severity)}
     </span>
   );
 }

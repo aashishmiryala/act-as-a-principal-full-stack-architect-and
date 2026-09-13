@@ -89,7 +89,7 @@ export default function Dashboard() {
           label="Active alerts"
           value={unack.length}
           icon={<ShieldAlert className="h-4 w-4" />}
-          hint={`${critical} critical · ${unack.length - critical} warning`}
+          hint={`${critical} high · ${unack.length - critical} moderate`}
           accent={critical > 0 ? "rose" : "amber"}
         />
         <StatCard

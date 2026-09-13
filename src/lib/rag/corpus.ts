@@ -112,7 +112,7 @@ const RAW: RawChunk[] = [
     source: "ml/ensemble.md",
     heading: "How scoring works",
     content:
-      "The engine fuses three detectors per metric: a Welford online z-score against the patient's long-run distribution (weight 0.42), an EWMA residual score that catches drift and step-changes (weight 0.33), and clinical rule scoring for absolute danger zones (weight 0.25). Each component is squashed with a logistic function of the z-score; the fused score ranges 0–1 and a value at or above 0.5 is considered anomalous.",
+      "The engine fuses four complementary detectors. Per metric it combines a Welford online z-score against the patient's long-run distribution, an EWMA residual score that catches drift and step-changes, and clinical rule scoring for absolute danger zones; each component is squashed with a logistic function and the fused per-metric score ranges 0–1, with 0.5 or above considered anomalous. In parallel an unsupervised Isolation Forest scores the standardised multivariate vital vector to catch joint deviations where several vitals drift together — patterns a per-metric view can miss. The Isolation Forest builds random isolation trees on a rolling window and re-fits online; anomalies isolate in fewer splits and score closer to 1, and a sustained high multivariate score raises a composite alert. Alert severities map to the LOW, MODERATE and HIGH tiers shown in the feed.",
   },
   {
     docId: "ml-hysteresis",

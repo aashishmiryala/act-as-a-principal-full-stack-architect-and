@@ -45,8 +45,8 @@ export default function Alerts() {
 
   const filters: { key: Filter; label: string }[] = [
     { key: "unacked", label: "Unacknowledged" },
-    { key: "critical", label: "Critical" },
-    { key: "warning", label: "Warning" },
+    { key: "critical", label: "High" },
+    { key: "warning", label: "Moderate" },
     { key: "all", label: "All" },
   ];
 
@@ -77,8 +77,8 @@ export default function Alerts() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Total alerts" value={counts.total} accent="brand" />
         <StatCard label="Unacknowledged" value={counts.unacked} accent="violet" />
-        <StatCard label="Critical" value={counts.critical} accent="rose" />
-        <StatCard label="Warning" value={counts.warning} accent="amber" />
+        <StatCard label="High" value={counts.critical} accent="rose" />
+        <StatCard label="Moderate" value={counts.warning} accent="amber" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

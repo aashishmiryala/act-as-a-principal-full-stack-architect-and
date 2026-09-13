@@ -66,7 +66,7 @@ export default function Login() {
             <div className="mt-8 grid grid-cols-2 gap-3">
               {[
                 { k: "MQTT / WebSocket", v: "Live telemetry bus" },
-                { k: "ML Ensemble", v: "z-score · EWMA · rules" },
+                { k: "ML Ensemble", v: "z-score · EWMA · iForest" },
                 { k: "RAG Assistant", v: "Grounded answers" },
                 { k: "RLS + Roles", v: "Secure by design" },
               ].map((f) => (

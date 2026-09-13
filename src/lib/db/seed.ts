@@ -86,8 +86,8 @@ export function buildSeed(): SeedPair[] {
     };
 
     const device: Device = {
-      id: makeDeviceId(i),
-      name: `HealthGuard Node ${String.fromCharCode(65 + i)}`,
+      id: i === 0 ? "esp32-simulated-01" : makeDeviceId(i),
+      name: i === 0 ? "ESP32-SIMULATED-01" : `HealthGuard Node ${String.fromCharCode(65 + i)}`,
       patientId,
       firmware: "hg-fw 2.4.1",
       hardware: "ESP32-WROOM-32",

@@ -123,7 +123,10 @@ export interface MetricPoint {
 
 export type Severity = "info" | "warning" | "critical";
 
-export type DetectorKind = "zscore" | "ewma" | "clinical" | "fall" | "ensemble";
+/** User-facing severity tier labels shown in the anomaly feed. */
+export type SeverityTier = "LOW" | "MODERATE" | "HIGH";
+
+export type DetectorKind = "zscore" | "ewma" | "clinical" | "fall" | "iforest" | "ensemble";
 
 export interface AnomalyScore {
   metric: VitalMetric;

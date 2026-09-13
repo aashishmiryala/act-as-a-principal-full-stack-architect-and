@@ -33,8 +33,8 @@ const PIPELINE = [
     icon: BrainCircuit,
     title: "ML Anomaly Engine",
     color: "text-violet-300",
-    desc: "Per-device ensemble: Welford z-score + EWMA residual + clinical rules, fused and squashed to 0–1, with hysteresis debouncing and a fall-detection state machine.",
-    tags: ["z-score", "EWMA", "NEWS2", "Fall"],
+    desc: "Per-device ensemble: Welford z-score + EWMA residual + clinical rules per metric, plus an Isolation Forest over the multivariate vital vector, fused and squashed to 0–1, with hysteresis debouncing and a fall-detection state machine.",
+    tags: ["z-score", "EWMA", "iForest", "NEWS2", "Fall"],
   },
   {
     icon: Database,

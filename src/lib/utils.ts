@@ -1,9 +1,22 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { Severity, SeverityTier } from "@/types";
 
 /** Tailwind-aware className combiner. */
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
+}
+
+/** Map an internal severity onto its user-facing anomaly-feed tier label. */
+export function severityTier(severity: Severity): SeverityTier {
+  switch (severity) {
+    case "critical":
+      return "HIGH";
+    case "warning":
+      return "MODERATE";
+    default:
+      return "LOW";
+  }
 }
 
 /** Deterministic RNG (mulberry32) so simulations are reproducible per seed. */
