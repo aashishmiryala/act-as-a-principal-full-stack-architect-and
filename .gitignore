@@ -1,0 +1,23 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+dist
+dist-preview
+dist-ssr
+*.local
+
+# TS build output / incremental info
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vite.singlefile.config.js
+vite.singlefile.config.d.ts
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
