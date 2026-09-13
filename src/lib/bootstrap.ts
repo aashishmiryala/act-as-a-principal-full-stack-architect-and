@@ -10,6 +10,7 @@ import { repository } from "@/lib/db/repository";
 import { fleet } from "@/lib/iot/fleet";
 import { telemetryHub } from "@/lib/telemetryHub";
 import { useAlertStore } from "@/store/useAlertStore";
+import { startTelemetryPersistence } from "@/lib/sync/telemetryPersistence";
 
 let booted = false;
 
@@ -29,4 +30,7 @@ export async function bootstrapSystem(): Promise<void> {
 
   telemetryHub.start();
   fleet.start();
+
+  // Persist the featured device's telemetry stream to Postgres (best-effort).
+  void startTelemetryPersistence();
 }
