@@ -8,7 +8,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   initialized: boolean;
-  init: () => void;
+  init: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<boolean>;
   register: (
     email: string,
@@ -27,8 +27,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: null,
   initialized: false,
 
-  init: () => {
-    const session = authService.restore();
+  init: async () => {
+    const session = await authService.restore();
     set({ session, user: session?.user ?? null, initialized: true });
   },
 

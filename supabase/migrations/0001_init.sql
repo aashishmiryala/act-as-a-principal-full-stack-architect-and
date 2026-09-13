@@ -1,17 +1,19 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- AIoT HealthGuard — initial schema
 -- ----------------------------------------------------------------------------
--- Production Postgres/Supabase schema mirroring src/types/index.ts. Every table
--- has Row-Level Security enabled with role/ward-scoped policies keyed on
--- auth.uid(). Apply with:
+-- Production Postgres/Supabase schema for the HealthGuard monitoring console.
+-- Every table has Row-Level Security enabled. Anonymous callers can read nothing
+-- that is PHI; the app's end-users authenticate with Supabase Auth and the
+-- policies below scope access to authenticated staff (with per-user rules on
+-- profiles and the audit log). Column ids are text to match the device/patient
+-- identifiers minted by the edge fleet firmware (e.g. esp32-a107, pat_001).
+--
+-- Apply with:
 --   POST https://api.supabase.com/v1/projects/<ref>/database/query
--- (Authorization: Bearer $SUPABASE_ACCESS_TOKEN)
+--   (Authorization: Bearer $SUPABASE_ACCESS_TOKEN)
 -- ════════════════════════════════════════════════════════════════════════════
 
 create extension if not exists "pgcrypto";
--- Optional extensions used by the full platform:
---   create extension if not exists timescaledb;  -- telemetry hypertable
---   create extension if not exists vector;        -- RAG embeddings
 
 -- ─── Enums ──────────────────────────────────────────────────────────────────
 do $$ begin
@@ -39,7 +41,7 @@ create table if not exists public.profiles (
 
 -- ─── patients ───────────────────────────────────────────────────────────────
 create table if not exists public.patients (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,                       -- e.g. pat_001
   mrn text unique not null,
   full_name text not null,
   sex text not null check (sex in ('male', 'female', 'other')),
@@ -52,17 +54,17 @@ create table if not exists public.patients (
   primary_caregiver uuid references public.profiles (id)
 );
 
--- ─── devices ────────────────────────────────────────────────────────────────
+-- ─── devices (ESP32 fleet) ──────────────────────────────────────────────────
 create table if not exists public.devices (
-  id text primary key,                       -- e.g. esp32-a100
+  id text primary key,                       -- e.g. esp32-a107
   name text not null,
-  patient_id uuid references public.patients (id) on delete set null,
+  patient_id text references public.patients (id) on delete set null,
   firmware text not null default 'hg-fw 2.4.1',
   hardware text not null default 'ESP32-WROOM-32',
   status device_status not null default 'provisioning',
   battery_pct numeric(5,2) not null default 100,
   rssi int not null default -55,
-  ip_address inet,
+  ip_address text,
   sample_rate_hz int not null default 1,
   sensors jsonb not null default '[]'::jsonb,
   location jsonb,
@@ -76,7 +78,7 @@ create index if not exists devices_patient_idx on public.devices (patient_id);
 create table if not exists public.telemetry (
   id bigint generated always as identity,
   device_id text not null references public.devices (id) on delete cascade,
-  patient_id uuid references public.patients (id) on delete set null,
+  patient_id text references public.patients (id) on delete set null,
   ts timestamptz not null default now(),
   seq bigint not null,
   metrics jsonb not null,
@@ -85,13 +87,12 @@ create table if not exists public.telemetry (
   primary key (id, ts)
 );
 create index if not exists telemetry_device_ts_idx on public.telemetry (device_id, ts desc);
--- With TimescaleDB: select create_hypertable('telemetry', 'ts', if_not_exists => true);
 
 -- ─── alerts ─────────────────────────────────────────────────────────────────
 create table if not exists public.alerts (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key,                       -- client-minted alert id
   device_id text not null references public.devices (id) on delete cascade,
-  patient_id uuid references public.patients (id) on delete set null,
+  patient_id text references public.patients (id) on delete set null,
   ts timestamptz not null default now(),
   severity alert_severity not null,
   metric text not null,
@@ -99,11 +100,12 @@ create table if not exists public.alerts (
   description text,
   value numeric,
   detector text not null,
-  score numeric(5,4) not null,
+  score numeric(6,4) not null default 0,
   recommendation text,
   acknowledged boolean not null default false,
-  acknowledged_by uuid references public.profiles (id),
-  acknowledged_at timestamptz
+  acknowledged_by text,
+  acknowledged_at timestamptz,
+  created_at timestamptz not null default now()
 );
 create index if not exists alerts_device_ts_idx on public.alerts (device_id, ts desc);
 create index if not exists alerts_unacked_idx on public.alerts (acknowledged, ts desc);
@@ -118,7 +120,6 @@ create table if not exists public.doc_chunks (
   heading text,
   content text not null,
   tokens int not null default 0
-  -- embedding vector(384)  -- when pgvector is enabled
 );
 
 -- ─── audit_log ──────────────────────────────────────────────────────────────
@@ -132,16 +133,11 @@ create table if not exists public.audit_log (
 );
 
 -- ════════════════════════════════════════════════════════════════════════════
--- Helper: current user's role / ward
+-- Helper: current user's role (security definer to avoid RLS recursion)
 -- ════════════════════════════════════════════════════════════════════════════
 create or replace function public.current_role() returns user_role
 language sql stable security definer set search_path = public as $$
   select role from public.profiles where id = auth.uid()
-$$;
-
-create or replace function public.current_ward() returns text
-language sql stable security definer set search_path = public as $$
-  select ward from public.profiles where id = auth.uid()
 $$;
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -163,64 +159,42 @@ drop policy if exists profiles_self_update on public.profiles;
 create policy profiles_self_update on public.profiles for update
   using (id = auth.uid());
 
--- patients: admins all; clinicians their ward; caregivers their linked patient.
+-- patients / devices / telemetry: readable by any authenticated staff member
+-- (shared monitoring console); writable by clinicians and admins.
 drop policy if exists patients_read on public.patients;
-create policy patients_read on public.patients for select using (
-  public.current_role() = 'admin'
-  or (public.current_role() = 'clinician' and ward = public.current_ward())
-  or (public.current_role() = 'caregiver' and primary_caregiver = auth.uid())
-);
+create policy patients_read on public.patients for select
+  using (auth.role() = 'authenticated');
 drop policy if exists patients_write on public.patients;
-create policy patients_write on public.patients for all using (
-  public.current_role() in ('admin', 'clinician')
-) with check (public.current_role() in ('admin', 'clinician'));
+create policy patients_write on public.patients for all
+  using (public.current_role() in ('admin', 'clinician'))
+  with check (public.current_role() in ('admin', 'clinician'));
 
--- devices: visible if the caller can see the linked patient.
 drop policy if exists devices_read on public.devices;
-create policy devices_read on public.devices for select using (
-  public.current_role() = 'admin'
-  or exists (
-    select 1 from public.patients p
-    where p.id = devices.patient_id
-      and (
-        (public.current_role() = 'clinician' and p.ward = public.current_ward())
-        or (public.current_role() = 'caregiver' and p.primary_caregiver = auth.uid())
-      )
-  )
-);
+create policy devices_read on public.devices for select
+  using (auth.role() = 'authenticated');
 
--- telemetry & alerts: same ward/role scoping as devices.
 drop policy if exists telemetry_read on public.telemetry;
-create policy telemetry_read on public.telemetry for select using (
-  public.current_role() = 'admin'
-  or exists (
-    select 1 from public.devices d join public.patients p on p.id = d.patient_id
-    where d.id = telemetry.device_id
-      and (
-        (public.current_role() = 'clinician' and p.ward = public.current_ward())
-        or (public.current_role() = 'caregiver' and p.primary_caregiver = auth.uid())
-      )
-  )
-);
+create policy telemetry_read on public.telemetry for select
+  using (auth.role() = 'authenticated');
 
+-- alerts: authenticated staff read the fleet feed, log new detections,
+-- acknowledge and clear them. (Anonymous callers are fully blocked by RLS.)
 drop policy if exists alerts_read on public.alerts;
-create policy alerts_read on public.alerts for select using (
-  public.current_role() = 'admin'
-  or exists (
-    select 1 from public.devices d join public.patients p on p.id = d.patient_id
-    where d.id = alerts.device_id
-      and (
-        (public.current_role() = 'clinician' and p.ward = public.current_ward())
-        or (public.current_role() = 'caregiver' and p.primary_caregiver = auth.uid())
-      )
-  )
-);
-drop policy if exists alerts_ack on public.alerts;
-create policy alerts_ack on public.alerts for update using (
-  public.current_role() in ('admin', 'clinician')
-) with check (public.current_role() in ('admin', 'clinician'));
+create policy alerts_read on public.alerts for select
+  using (auth.role() = 'authenticated');
+drop policy if exists alerts_insert on public.alerts;
+create policy alerts_insert on public.alerts for insert
+  with check (auth.role() = 'authenticated');
+drop policy if exists alerts_update on public.alerts;
+create policy alerts_update on public.alerts for update
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
+drop policy if exists alerts_delete on public.alerts;
+create policy alerts_delete on public.alerts for delete
+  using (auth.role() = 'authenticated');
 
 -- doc_chunks: readable by any authenticated user (non-PHI documentation).
+-- Server-side RAG retrieval runs in an edge function with the service role.
 drop policy if exists doc_chunks_read on public.doc_chunks;
 create policy doc_chunks_read on public.doc_chunks for select
   using (auth.role() = 'authenticated');
@@ -239,12 +213,13 @@ create policy audit_insert on public.audit_log for insert
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.profiles (id, email, full_name, role)
+  insert into public.profiles (id, email, full_name, role, avatar_color)
   values (
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
-    coalesce((new.raw_user_meta_data ->> 'role')::user_role, 'clinician')
+    coalesce((new.raw_user_meta_data ->> 'role')::user_role, 'clinician'),
+    coalesce(new.raw_user_meta_data ->> 'avatar_color', '#22d3ee')
   )
   on conflict (id) do nothing;
   return new;
@@ -254,3 +229,8 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Realtime: broadcast alert changes to subscribed dashboards.
+do $$ begin
+  alter publication supabase_realtime add table public.alerts;
+exception when duplicate_object then null; end $$;

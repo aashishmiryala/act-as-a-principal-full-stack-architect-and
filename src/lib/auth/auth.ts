@@ -1,23 +1,22 @@
 /**
- * Authentication service (client-side).
+ * Authentication service — Supabase Auth (with a resilient local fallback).
  * ------------------------------------------------------------------
- * Provides email/password sign-in + registration with role-based sessions,
- * persisted to localStorage. This is the exact surface the app would use against
- * Supabase Auth — swap these methods for `supabase.auth.signInWithPassword(...)`
- * etc. and the rest of the app is unchanged. Demo credentials are seeded so the
- * preview build is immediately explorable.
+ * End-users sign in / register against Supabase Auth. A profile row is created
+ * automatically by the `handle_new_user` trigger and read back to hydrate the
+ * app's `User`. If the network/Supabase is unreachable (e.g. the fully offline
+ * single-file preview) the seeded demo accounts still work via a local session
+ * so the console is always explorable.
  */
 
 import type { Session, User, UserRole } from "@/types";
 import { uid } from "@/lib/utils";
+import { supabase } from "@/lib/supabase/client";
+import type {
+  Session as SbSession,
+  User as SbUser,
+} from "@supabase/supabase-js";
 
-const SESSION_KEY = "healthguard.session.v1";
-const USERS_KEY = "healthguard.users.v1";
-const SESSION_TTL = 1000 * 60 * 60 * 12; // 12h
-
-interface StoredUser extends User {
-  password: string;
-}
+const SESSION_KEY = "healthguard.session.v1"; // local fallback session only
 
 const ROLE_COLORS: Record<UserRole, string> = {
   admin: "#f472b6",
@@ -26,78 +25,106 @@ const ROLE_COLORS: Record<UserRole, string> = {
   patient: "#34d399",
 };
 
-const DEMO_USERS: StoredUser[] = [
-  {
-    id: "usr_admin",
-    email: "admin@healthguard.io",
-    password: "healthguard",
-    fullName: "Dr. Ada Reeves",
-    role: "admin",
-    avatarColor: ROLE_COLORS.admin,
-    createdAt: Date.now(),
-  },
-  {
-    id: "usr_clinician",
-    email: "clinician@healthguard.io",
-    password: "healthguard",
-    fullName: "Dr. Noah Bennett",
-    role: "clinician",
-    avatarColor: ROLE_COLORS.clinician,
-    createdAt: Date.now(),
-  },
-  {
-    id: "usr_caregiver",
-    email: "caregiver@healthguard.io",
-    password: "healthguard",
-    fullName: "Maria Santos",
-    role: "caregiver",
-    avatarColor: ROLE_COLORS.caregiver,
-    createdAt: Date.now(),
-  },
-];
-
-function loadUsers(): StoredUser[] {
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as StoredUser[];
-      // Ensure demo users always exist.
-      const emails = new Set(parsed.map((u) => u.email));
-      for (const d of DEMO_USERS) if (!emails.has(d.email)) parsed.push(d);
-      return parsed;
-    }
-  } catch {
-    /* fall through to seed */
-  }
-  persistUsers(DEMO_USERS);
-  return [...DEMO_USERS];
+interface DemoUser {
+  id: string;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  avatarColor: string;
 }
 
-function persistUsers(users: StoredUser[]): void {
+const DEMO_USERS: DemoUser[] = [
+  { id: "usr_admin", email: "admin@healthguard.io", fullName: "Dr. Ada Reeves", role: "admin", avatarColor: ROLE_COLORS.admin },
+  { id: "usr_clinician", email: "clinician@healthguard.io", fullName: "Dr. Noah Bennett", role: "clinician", avatarColor: ROLE_COLORS.clinician },
+  { id: "usr_caregiver", email: "caregiver@healthguard.io", fullName: "Maria Santos", role: "caregiver", avatarColor: ROLE_COLORS.caregiver },
+];
+
+const DEMO_PASSWORD = "healthguard";
+
+function friendlyError(err: unknown): string {
+  const msg = (err as { message?: string })?.message ?? String(err);
+  if (/invalid login credentials/i.test(msg)) return "Invalid email or password.";
+  if (/already registered|already exists|user already/i.test(msg))
+    return "An account with that email already exists.";
+  if (/email.*confirm/i.test(msg)) return "Please confirm your email, then sign in.";
+  return msg || "Authentication failed.";
+}
+
+async function profileToUser(sb: SbUser): Promise<User> {
+  const meta = (sb.user_metadata ?? {}) as Record<string, string>;
+  let role = (meta.role as UserRole) ?? "clinician";
+  let fullName = meta.full_name ?? sb.email?.split("@")[0] ?? "User";
+  let avatarColor = meta.avatar_color ?? ROLE_COLORS[role] ?? "#22d3ee";
+  let createdAt = sb.created_at ? new Date(sb.created_at).getTime() : Date.now();
+
   try {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+    const { data } = await supabase
+      .from("profiles")
+      .select("full_name, role, avatar_color, created_at")
+      .eq("id", sb.id)
+      .maybeSingle();
+    if (data) {
+      role = (data.role as UserRole) ?? role;
+      fullName = data.full_name || fullName;
+      avatarColor = data.avatar_color || avatarColor;
+      createdAt = data.created_at ? new Date(data.created_at).getTime() : createdAt;
+    }
+  } catch {
+    /* profile read failed — fall back to auth metadata */
+  }
+
+  return { id: sb.id, email: sb.email ?? "", fullName, role, avatarColor, createdAt };
+}
+
+function toSession(sb: SbSession, user: User): Session {
+  return {
+    token: sb.access_token,
+    user,
+    issuedAt: Date.now(),
+    expiresAt: sb.expires_at ? sb.expires_at * 1000 : Date.now() + 3600_000,
+  };
+}
+
+function localSession(demo: DemoUser): Session {
+  const user: User = {
+    id: demo.id,
+    email: demo.email,
+    fullName: demo.fullName,
+    role: demo.role,
+    avatarColor: demo.avatarColor,
+    createdAt: Date.now(),
+  };
+  const session: Session = {
+    token: uid("local"),
+    user,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 12 * 3600_000,
+  };
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   } catch {
     /* non-fatal */
   }
-}
-
-function toPublic(u: StoredUser): User {
-  const { password: _pw, ...pub } = u;
-  void _pw;
-  return pub;
+  return session;
 }
 
 export const authService = {
   demoCredentials: DEMO_USERS.map((u) => ({ email: u.email, role: u.role })),
 
   async signIn(email: string, password: string): Promise<Session> {
-    await delay(320);
-    const users = loadUsers();
-    const user = users.find((u) => u.email.toLowerCase() === email.toLowerCase().trim());
-    if (!user || user.password !== password) {
-      throw new Error("Invalid email or password.");
+    const em = email.trim().toLowerCase();
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email: em, password });
+      if (error) throw error;
+      if (!data.session || !data.user) throw new Error("Sign-in failed.");
+      const user = await profileToUser(data.user);
+      return toSession(data.session, user);
+    } catch (err) {
+      // Offline / unreachable → let the seeded demo accounts through locally.
+      const demo = DEMO_USERS.find((d) => d.email === em);
+      if (demo && password === DEMO_PASSWORD) return localSession(demo);
+      throw new Error(friendlyError(err));
     }
-    return this.issueSession(toPublic(user));
   },
 
   async register(
@@ -106,57 +133,60 @@ export const authService = {
     fullName: string,
     role: UserRole = "clinician",
   ): Promise<Session> {
-    await delay(360);
-    const users = loadUsers();
-    if (users.some((u) => u.email.toLowerCase() === email.toLowerCase().trim())) {
-      throw new Error("An account with that email already exists.");
-    }
+    const em = email.trim().toLowerCase();
     if (password.length < 6) throw new Error("Password must be at least 6 characters.");
-    const user: StoredUser = {
-      id: uid("usr"),
-      email: email.trim(),
-      password,
-      fullName: fullName.trim() || email.split("@")[0],
-      role,
-      avatarColor: ROLE_COLORS[role],
-      createdAt: Date.now(),
-    };
-    users.push(user);
-    persistUsers(users);
-    return this.issueSession(toPublic(user));
-  },
-
-  issueSession(user: User): Session {
-    const session: Session = {
-      token: uid("tok"),
-      user,
-      issuedAt: Date.now(),
-      expiresAt: Date.now() + SESSION_TTL,
-    };
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    } catch {
-      /* non-fatal */
+      const { data, error } = await supabase.auth.signUp({
+        email: em,
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim() || em.split("@")[0],
+            role,
+            avatar_color: ROLE_COLORS[role],
+          },
+        },
+      });
+      if (error) throw error;
+      if (data.session && data.user) {
+        const user = await profileToUser(data.user);
+        return toSession(data.session, user);
+      }
+      // Session not returned (e.g. confirmation flow) — attempt an immediate sign-in.
+      return await this.signIn(em, password);
+    } catch (err) {
+      throw new Error(friendlyError(err));
     }
-    return session;
   },
 
-  restore(): Session | null {
+  async restore(): Promise<Session | null> {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        const user = await profileToUser(data.session.user);
+        return toSession(data.session, user);
+      }
+    } catch {
+      /* fall back to any local demo session */
+    }
     try {
       const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return null;
-      const session = JSON.parse(raw) as Session;
-      if (session.expiresAt < Date.now()) {
-        this.signOut();
-        return null;
+      if (raw) {
+        const session = JSON.parse(raw) as Session;
+        if (session.expiresAt > Date.now()) return session;
       }
-      return session;
     } catch {
-      return null;
+      /* ignore */
     }
+    return null;
   },
 
   signOut(): void {
+    try {
+      void supabase.auth.signOut();
+    } catch {
+      /* non-fatal */
+    }
     try {
       localStorage.removeItem(SESSION_KEY);
     } catch {
@@ -164,7 +194,3 @@ export const authService = {
     }
   },
 };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}

@@ -20,8 +20,8 @@ and a polished real-time console — with **zero external dependencies required 
 | **MQTT / WebSocket telemetry** | In-browser `MqttBroker` with hierarchical topics, `+`/`#` wildcards, retained messages, QoS semantics and live throughput metering. Bridges to a real broker via `VITE_MQTT_WSS_URL`. |
 | **ML anomaly detection** | Per-device ensemble: Welford online **z-score** + **EWMA** residual + **clinical rules** (NEWS2-style), fused and logistic-squashed to a 0–1 score, with **hysteresis** debouncing and a two-stage **fall-detection** state machine. |
 | **RAG documentation retrieval** | Dependency-free **TF-IDF vector store** + cosine/keyword hybrid ranking over a curated clinical/technical corpus, with cited extractive answers (or grounded LLM synthesis when configured). |
-| **Authentication** | Email/password sign-in + registration, role-based sessions (admin / clinician / caregiver / patient), persisted locally. Mirrors the Supabase Auth surface. |
-| **Backend & schema** | Full Postgres schema with **Row-Level Security** in `supabase/migrations/0001_init.sql`, ready to apply to a Supabase project. |
+| **Authentication** | **Supabase Auth** email/password sign-in + registration with role-based sessions (admin / clinician / caregiver / patient). A `profiles` row is auto-provisioned by a Postgres trigger; the app degrades to a local demo session if offline so the preview always works. |
+| **Backend & schema** | **Live Supabase Postgres** with **Row-Level Security** on every table (`supabase/migrations/0001_init.sql`). Alerts are persisted, streamed over **Realtime**, acknowledged and cleared through RLS-guarded policies. The RAG assistant runs as a **Supabase Edge Function** (`clinical-assistant`) that retrieves over the `doc_chunks` corpus server-side. |
 | **React console** | Real-time dashboard, device fleet, per-patient monitoring with live charts, alert center, RAG assistant, IoT simulator/broker inspector, and an interactive architecture reference. |
 
 ## Getting started
@@ -71,12 +71,20 @@ src/
 supabase/migrations/      # Postgres schema + RLS policies
 ```
 
-## Connecting a real backend (optional)
+## Connecting the backend
+
+The app ships wired to a live Supabase project via the public `VITE_SUPABASE_URL`
+and `VITE_SUPABASE_ANON_KEY` (already committed to `.env`). To reproduce the
+backend on your own project:
 
 1. Set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
-2. Apply `supabase/migrations/0001_init.sql` to your project.
-3. Swap the repository/auth service internals for `@supabase/supabase-js` calls — the rest
-   of the app is transport-agnostic by design.
+2. Apply `supabase/migrations/0001_init.sql` (POST it to the Management API's
+   `/database/query` endpoint, or `supabase db push`).
+3. Seed patients/devices/doc_chunks: `npx tsx scripts/gen_seed.ts | <psql/query>`.
+4. Deploy the edge function: `supabase functions deploy clinical-assistant`.
 
-Secrets (service-role key, broker credentials, LLM keys) must **never** ship in the client
-bundle; privileged operations belong in Supabase Edge Functions.
+Secrets (service-role key, management token, LLM keys) must **never** ship in the
+client bundle. Privileged reads/writes go through RLS policies or edge functions
+(which receive `SUPABASE_SERVICE_ROLE_KEY` automatically at runtime). Optional
+`LLM_API_URL` / `OPENAI_API_KEY` **function secrets** upgrade the assistant from
+extractive to grounded-LLM synthesis.

@@ -13,12 +13,14 @@ import { useAlertStore } from "@/store/useAlertStore";
 
 let booted = false;
 
-export function bootstrapSystem(): void {
+export async function bootstrapSystem(): Promise<void> {
   if (booted) return;
   booted = true;
 
   repository.init();
-  useAlertStore.getState().init();
+  // Load persisted alerts (Supabase when signed in, else local) BEFORE the
+  // telemetry hub can start emitting new detections into the store.
+  await useAlertStore.getState().init();
 
   // Route anomaly-engine alerts into the alert store (and thus the UI + storage).
   telemetryHub.setAlertSink((alert) => {

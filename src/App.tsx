@@ -47,13 +47,13 @@ export default function App() {
   const initFleet = useFleetStore((s) => s.init);
 
   useEffect(() => {
-    initAuth();
+    void initAuth();
   }, [initAuth]);
 
   // Boot the runtime once the user is authenticated.
   useEffect(() => {
     if (session) {
-      bootstrapSystem();
+      void bootstrapSystem();
       initFleet();
     }
   }, [session, initFleet]);

@@ -11,6 +11,7 @@
 import type { RagAnswer, RagCitation, RetrievedChunk } from "@/types";
 import { CORPUS } from "./corpus";
 import { TfidfVectorStore, tokenize } from "./vectorStore";
+import { supabase } from "@/lib/supabase/client";
 
 const store = new TfidfVectorStore(CORPUS);
 
@@ -121,6 +122,28 @@ async function synthesiseLlm(
 
 export async function askAssistant(query: string, k = 4): Promise<RagAnswer> {
   const started = performance.now();
+
+  // Primary path: the `clinical-assistant` Supabase Edge Function performs
+  // retrieval server-side over the doc_chunks corpus in Postgres.
+  try {
+    const { data, error } = await supabase.functions.invoke<RagAnswer>("clinical-assistant", {
+      body: { query, k },
+    });
+    if (!error && data && typeof data.answer === "string") {
+      return {
+        query: data.query ?? query,
+        answer: data.answer,
+        citations: data.citations ?? [],
+        retrieved: data.retrieved ?? [],
+        latencyMs: data.latencyMs ?? Math.round(performance.now() - started),
+        mode: data.mode ?? "extractive",
+      };
+    }
+  } catch {
+    /* fall through to the in-browser retriever */
+  }
+
+  // Fallback path: fully in-browser TF-IDF retrieval so the assistant always works.
   const retrieved = retrieve(query, k);
   const citations = buildCitations(retrieved);
 
