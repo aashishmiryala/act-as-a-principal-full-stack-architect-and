@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import {
   Navigate,
   Route,
-  BrowserRouter,
+  HashRouter,
   Routes,
   useLocation,
 } from "react-router-dom";
@@ -59,7 +59,7 @@ export default function App() {
   }, [session, initFleet]);
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route
@@ -79,6 +79,6 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
